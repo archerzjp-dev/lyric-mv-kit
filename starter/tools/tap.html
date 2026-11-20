@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8" />
+<title>逐字打点</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: dark; --bg: #0f1013; --fg: #e6e4de; --dim: #6b6d72; --red: #d3261c; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.6 -apple-system, "PingFang SC", sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 80px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.note { color: var(--dim); margin: 0 0 16px; }
+  textarea { width: 100%; height: 150px; background: #17181c; color: var(--fg); border: 1px solid #2a2c31; border-radius: 4px; padding: 8px; font: inherit; box-sizing: border-box; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin: 12px 0; }
+  button, select, input[type=number] { background: #1d1f24; color: var(--fg); border: 1px solid #33363c; border-radius: 4px; padding: 6px 12px; font: inherit; }
+  button:hover { border-color: var(--fg); }
+  #board { margin-top: 18px; font: 900 34px/1.8 "Songti SC", "Noto Serif SC", serif; }
+  #board .ln { white-space: pre-wrap; }
+  #board .c { color: var(--dim); }
+  #board .c.done { color: var(--fg); }
+  #board .c.next { color: var(--red); text-decoration: underline; }
+  #status { color: var(--dim); font: 13px/1.5 ui-monospace, Menlo, monospace; }
+  kbd { border: 1px solid #44474e; border-radius: 3px; padding: 0 5px; font: 12px ui-monospace, Menlo, monospace; }
+</style>
+</head>
+<body>
+<main>
+  <h1>逐字打点</h1>
+  <p class="note">
+    给每个字打上“开始唱”的时间，导出成起步工程用的 <code>data/lyrics.js</code>。直接双击打开本页就能用，文件都只在你自己的浏览器里，不上传。<br>
+    放慢到 0.5 倍打：手的误差也跟着减半。打完用“预览”对一遍，整体早了或晚了就调“整体偏移”。
+  </p>
+
+  <div class="row">
+    <label>歌：<input type="file" id="file" accept="audio/*" /></label>
+    <label>速度
+      <select id="rate"><option value="0.5">0.5 倍</option><option value="0.75">0.75 倍</option><option value="1">原速</option></select>
+    </label>
+    <label>整体偏移（毫秒）<input type="number" id="offset" value="-60" step="10" style="width:90px" /></label>
+  </div>
+  <textarea id="text" placeholder="一行一句歌词。句内可以用空格分短语（空格不打点）。"></textarea>
+  <div class="row">
+    <button id="start">从头开始打点</button>
+    <button id="preview">预览</button>
+    <button id="export">导出 lyrics.js</button>
+    <span id="status"></span>
+  </div>
+  <p class="note">
+    <kbd>空格</kbd> 下一个字开始唱 · <kbd>回车</kbd> 这一句唱完（拖音结束、换气处） · <kbd>⌫</kbd> 撤销上一下 · <kbd>←</kbd> 退回 3 秒重打 · <kbd>Esc</kbd> 暂停
+  </p>
+  <div id="board"></div>
+</main>
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const audio = new Audio();
+  let lines = [];        // [{ text, chars: [{ c, start?, end? }], end? }]
+  let flat = [];         // 需要打点的字，按顺序：{ li, ci }
+  let cursor = 0;        // 下一个要打的字
+  let mode = 'idle';     // idle | tap | preview
+  let history = [];      // 撤销用：每一步是 { kind: 'start'|'end', ... }
+
+  $('file').onchange = (e) => { const f = e.target.files[0]; if (f) { audio.src = URL.createObjectURL(f); say(`载入 ${f.name}`); } };
+  const rate = () => +$('rate').value;
+  const offset = () => (+$('offset').value || 0) / 1000;
+  const say = (s) => ($('status').textContent = s);
+
+  function parse() {
+    lines = $('text').value.split('\n').map((s) => s.trim()).filter(Boolean)
+      .map((text) => ({ text, chars: [...text].map((c) => ({ c })) }));
+    flat = [];
+    lines.forEach((l, li) => l.chars.forEach((ch, ci) => { if (ch.c.trim()) flat.push({ li, ci }); }));
+  }
+
+  function draw(t) {
+    const nextKey = mode === 'tap' && flat[cursor] ? `${flat[cursor].li}:${flat[cursor].ci}` : '';
+    $('board').innerHTML = lines.map((l, li) => '<div class="ln">' + l.chars.map((ch, ci) => {
+      let cls = 'c';
+      if (mode === 'preview' ? ch.start !== undefined && t >= ch.start : ch.start !== undefined) cls += ' done';
+      if (`${li}:${ci}` === nextKey) cls += ' next';
+      return `<span class="${cls}">${ch.c === ' ' ? '　' : ch.c}</span>`;
+    }).join('') + '</div>').join('');
+  }
+
+  // 打点用的是 audio.currentTime（歌的时间，和播放速度无关），再加整体偏移补手的反应时间
+  const now = () => Math.max(0, audio.currentTime + offset());
+
+  $('start').onclick = () => {
+    if (!audio.src) return say('先选一首歌');
+    parse();
+    if (!flat.length) return say('先贴歌词');
+    cursor = 0; history = [];
+    mode = 'tap';
+    audio.playbackRate = rate();
+    audio.currentTime = 0;
+    audio.play();
+    draw(0);
+    say('打点中：每个字开始唱的那一刻按空格');
+  };
+
+  $('preview').onclick = () => {
+    if (!audio.src || !lines.length) return;
+    mode = 'preview';
+    audio.playbackRate = 1;
+    audio.currentTime = Math.max(0, (lines[0].chars.find((c) => c.start !== undefined)?.start ?? 0) - 2);
+    audio.play();
+    const tick = () => { if (mode !== 'preview' || audio.paused) return; draw(audio.currentTime); requestAnimationFrame(tick); };
+    requestAnimationFrame(tick);
+    say('预览：亮起来的时间应该和听到的字同时；早了把偏移往正调，晚了往负调，再导出');
+  };
+
+  window.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+    if (e.key === 'Escape') { audio.paused ? audio.play() : audio.pause(); return; }
+    if (mode !== 'tap') return;
+    if (e.key === ' ') {
+      e.preventDefault();
+      const p = flat[cursor];
+      if (!p) return;
+      const t = now();
+      const ch = lines[p.li].chars[p.ci];
+      ch.start = +t.toFixed(3);
+      history.push({ kind: 'start', p });
+      cursor++;
+      draw();
+      say(`第 ${cursor}/${flat.length} 个字 · ${t.toFixed(2)} s`);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const prev = flat[cursor - 1];
+      if (!prev) return;
+      lines[prev.li].end = +now().toFixed(3);
+      history.push({ kind: 'end', li: prev.li });
+      say(`第 ${prev.li + 1} 句结束 · ${now().toFixed(2)} s`);
+    } else if (e.key === 'Backspace') {
+      e.preventDefault();
+      const h = history.pop();
+      if (!h) return;
+      if (h.kind === 'start') { delete lines[h.p.li].chars[h.p.ci].start; cursor--; }
+      else delete lines[h.li].end;
+      draw();
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const back = Math.max(0, audio.currentTime - 3);
+      // 退回去以后，这个时间之后打过的点全部作废
+      while (history.length) {
+        const h = history[history.length - 1];
+        const t = h.kind === 'start' ? lines[h.p.li].chars[h.p.ci].start : lines[h.li].end;
+        if (t - offset() < back) break;
+        history.pop();
+        if (h.kind === 'start') { delete lines[h.p.li].chars[h.p.ci].start; cursor--; } else delete lines[h.li].end;
+      }
+      audio.currentTime = back;
+      draw();
+    }
+  });
+
+  // 导出：每个字的 end 取下一个字的 start（同一句内），句尾取回车打的结束点，没打就按 0.6 秒
+  function build() {
+    const out = [];
+    for (const l of lines) {
+      const chars = l.chars.filter((c) => c.c.trim());
+      if (chars.some((c) => c.start === undefined)) return null;
+      const res = [];
+      l.chars.forEach((c, i) => {
+        if (!c.c.trim()) { const nx = l.chars.slice(i).find((x) => x.c.trim()); res.push({ c: c.c, start: nx.start, end: nx.start }); return; }
+        const nx = l.chars.slice(i + 1).find((x) => x.c.trim());
+        const end = nx ? nx.start : (l.end ?? c.start + 0.6);
+        res.push({ c: c.c, start: c.start, end: +Math.max(c.start + 0.05, end).toFixed(3) });
+      });
+      const realEnd = l.end ?? res[res.length - 1].end;
+      out.push({ text: l.text, start: res.find((c) => c.c.trim()).start, end: realEnd, chars: res });
+    }
+    return { lines: out };
+  }
+  $('export').onclick = () => {
+    const data = build();
+    if (!data) return say('还有字没打点，打完再导出');
+    // 时间必须单调：后一个字不能早于前一个字
+    const all = data.lines.flatMap((l) => l.chars.filter((c) => c.c.trim()));
+    const bad = all.findIndex((c, i) => i > 0 && c.start < all[i - 1].start);
+    if (bad > 0) return say(`第 ${bad + 1} 个字比前一个字还早，撤销重打这一段`);
+    const js = '// 由 tools/tap.html 导出。每个字的 start/end 是秒。\nwindow.LYRICS = ' + JSON.stringify(data) + ';\n';
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([js], { type: 'text/javascript' }));
+    a.download = 'lyrics.js';
+    a.click();
+    say(`导出 ${all.length} 个字。放进工程的 data/ 里`);
+  };
+})();
+</script>
+</body>
+</html>

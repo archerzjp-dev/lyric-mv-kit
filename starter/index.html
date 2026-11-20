@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>代码 MV 起步工程</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.15.0/dist/gsap.min.js"></script>
+    <style>
+      /* 中文字体：默认用本机装的宋体。要用自己的字体（如思源宋体 Heavy，SIL OFL）：
+         把文件放到 assets/fonts/display.ttf，再把下面 src 换成注释里那一行。
+         （文件不存在时别引用它：HyperFrames 的检查会报 404。）
+         canvas 画字前要等字体载入（见下面的 ready）。 */
+      @font-face {
+        font-family: "MVDisplay";
+        font-weight: 900;
+        src: local("Source Han Serif SC Heavy"), local("Noto Serif SC Black"), local("Songti SC Black"), local("STSongti-SC-Black");
+        /* src: url("assets/fonts/display.ttf"), local("Songti SC Black"); */
+      }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #000; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; }
+      #stage { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; display: block; }
+    </style>
+  </head>
+  <body>
+    <!-- 时长：和歌一样长（秒）。改歌时改这里的三处 16。 -->
+    <div id="root" data-composition-id="main" data-start="0" data-duration="16" data-width="1920" data-height="1080" data-fps="30">
+      <canvas id="stage" class="clip" data-start="0" data-duration="16" data-track-index="0" data-layout-allow-overflow></canvas>
+      <audio id="song" class="clip" src="assets/song.wav" data-start="0" data-duration="16" data-track-index="1" data-volume="1"></audio>
+    </div>
+
+    <script src="lib/mv.js"></script>
+    <script src="data/music.js"></script>
+    <script src="data/lyrics.js"></script>
+    <script src="scenes.js"></script>
+    <script>
+      // 画面在 hf-seek 里按时间画（见 lib/mv.js 的 MV.connect）；这里只登记一条和歌一样长的空时间线
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      tl.to({}, { duration: 16 }, 0);
+      window.__timelines["main"] = tl;
+
+      // 采样数：1 是草稿（快），正式渲染改成 8–16（每帧在快门里多画几遍取平均 = 运动模糊）
+      const stage = MV.Stage(document.getElementById("stage"), { fps: 30, samples: 1, shutter: 0.5 });
+      stage.setScenes(window.SCENES);
+      const chars = window.LYRICS.lines.map((l) => l.text).join("") + "线";
+      const ready = document.fonts.load('900 100px "MVDisplay"', chars).then(() => document.fonts.ready);
+      MV.connect(stage, ready, "mv-stage");
+      tl.seek(0);
+    </script>
+  </body>
+</html>

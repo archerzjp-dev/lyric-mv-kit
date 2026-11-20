@@ -1,0 +1,12 @@
+# 渲染和测量的产物
+out/
+renders/
+.hyperframes/
+*.mp4
+low.json
+full.json
+# 示范音频由 tools/demo-audio.sh 现场生成；你自己的歌和字体不进仓库
+starter/assets/song.wav
+starter/assets/fonts/*.ttf
+starter/assets/fonts/*.otf
+.DS_Store
